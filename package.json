@@ -1,0 +1,22 @@
+{
+  "name": "konoha",
+  "version": "0.1.0",
+  "description": "Orchestrator that runs an approved plan with multiple AI coding tools",
+  "type": "module",
+  "bin": {
+    "konoha": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc && cp -R src/adapters/builtin dist/adapters/",
+    "test": "vitest run"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.1"
+  }
+}

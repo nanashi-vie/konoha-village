@@ -1,0 +1,5 @@
+{"binary":"claude","isolation":"trusted","modelFlag":["--model","{model}"],"commandRule":"Bash({cmd}:*)",
+ "modelFrom":{"path":["modelUsage"],"firstKey":true},
+ "modes":{
+   "work":{"args":["-p","{prompt}","--output-format","json","--permission-mode","acceptEdits","--allowedTools","Read,Edit,Write,Glob,Grep,{allowCommands}","{modelFlag}"]},
+   "review":{"args":["-p","{prompt}","--output-format","json","--permission-mode","default","--allowedTools","Read,Glob,Grep,Bash(git diff:*),Bash(git log:*)","{modelFlag}"]}}}
