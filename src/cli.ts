@@ -86,10 +86,12 @@ async function toolCommand(args: string[], cwd: string, home: string): Promise<n
   const [sub, name] = args;
   const loaded = loadAdapters(cwd, home);
   const verifications = loadVerifications(home);
+  let policy: Policy = { allowCommands: [] };
+  try { policy = loadPolicy(cwd, loadConfig(cwd)); } catch { /* no config yet: check with no commands */ }
   if (sub === 'list') {
     for (const tool of [...loaded.adapters.keys()].sort()) {
       const a = loaded.adapters.get(tool)!;
-      const trust = a.isolation === 'trusted' ? 'tin sẵn' : isAssignable(a, verifications) ? 'đã xác minh' : 'chưa xác minh';
+      const trust = a.isolation === 'trusted' ? 'tin sẵn' : isAssignable(a, verifications, policy) ? 'đã xác minh' : 'chưa xác minh';
       console.log(`${tool} ${SOURCE_LABEL[loaded.sources[tool]]} ${defaultWhich(a.binary) ? 'có lệnh' : 'thiếu lệnh'} ${trust}`);
     }
     for (const e of loaded.errors) console.log(`LỖI ${e.tool}: ${e.message}`);
@@ -98,11 +100,9 @@ async function toolCommand(args: string[], cwd: string, home: string): Promise<n
   if (sub === 'check' && name) {
     const adapter = loaded.adapters.get(name);
     if (!adapter) { console.log(`Không có công cụ "${name}"`); return 1; }
-    let policy: Policy = { allowCommands: [] };
-    try { policy = loadPolicy(cwd, loadConfig(cwd)); } catch { /* no config yet: check with no commands */ }
     const result = await checkTool(adapter, policy);
     if (!result.ok) { console.log(result.detail); return 2; }
-    recordVerification({ tool: name, hash: adapter.hash, date: new Date().toISOString().slice(0, 10) }, home);
+    recordVerification({ tool: name, hash: adapter.hash, date: new Date().toISOString().slice(0, 10), commands: policy.allowCommands }, home);
     console.log(`Đã xác minh ${name}`);
     return 0;
   }

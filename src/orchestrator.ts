@@ -14,7 +14,7 @@ import {
 import { notifyUser } from './notify.js';
 import { parsePlan, type Plan, type PlanTask } from './plan/parse.js';
 import { validatePlan } from './plan/validate.js';
-import { runReview } from './review.js';
+import { ReviewError, runReview } from './review.js';
 import { nextRunnable } from './scheduler.js';
 import { runDir } from './state/store.js';
 import { appendEvent, type EventType } from './state/events.js';
@@ -45,6 +45,7 @@ export function defaultWhich(bin: string): boolean {
 export function preflightTools(
   plan: Plan, adapters: Map<string, Adapter>, verifications: Record<string, Verification>,
   which: (bin: string) => boolean, loadErrors: { tool: string; message: string }[],
+  policy?: Policy, reviewModel?: string,
 ): string[] {
   const errors: string[] = [];
   const tools = [...new Set([...plan.tasks.map((t) => t.tool).filter((t) => t !== ''), 'claude'])];
@@ -56,13 +57,23 @@ export function preflightTools(
     }
     const adapter = adapters.get(name);
     if (!adapter) continue; // validatePlan reports unknown tools; claude is checked below
-    if (!isAssignable(adapter, verifications)) {
+    if (!isAssignable(adapter, verifications, policy)) {
       errors.push(`Công cụ "${name}" chưa xác minh cách ly: chạy konoha tool check ${name}`);
     }
     if (!which(adapter.binary)) errors.push(`Công cụ "${name}": không tìm thấy lệnh "${adapter.binary}" trên máy`);
   }
   const claude = adapters.get('claude');
   if (!claude || !claude.hasMode('review')) errors.push('Review cần công cụ "claude" có chế độ review');
+  // Dry-run the command builder so forbidden flags and bad model names fail now, not mid-run.
+  const dry = { prompt: '', worktree: '/', policy: policy ?? { allowCommands: [] } };
+  for (const t of plan.tasks) {
+    const a = adapters.get(t.tool);
+    if (!a) continue;
+    try { a.build({ ...dry, mode: 'work', model: t.model }); } catch (err) { errors.push(`Task ${t.id}: ${(err as Error).message}`); }
+  }
+  if (claude?.hasMode('review') && reviewModel !== undefined) {
+    try { claude.build({ ...dry, mode: 'review', model: reviewModel }); } catch (err) { errors.push(`Review: ${(err as Error).message}`); }
+  }
   return errors;
 }
 
@@ -117,14 +128,14 @@ async function runPlanLocked(repoRoot: string, planPath: string, deps: RunDeps, 
   const adapters = deps.adapters ?? loaded!.adapters;
   const loadErrors = loaded?.errors ?? [];
   const verifications = deps.verifications ?? loadVerifications(home);
+  const config: Config = loadConfig(repoRoot);
+  const policy: Policy = loadPolicy(repoRoot, config);
   const problems = [
-    ...validatePlan(plan, [...adapters.keys()]),
-    ...preflightTools(plan, adapters, verifications, which, loadErrors),
+    ...validatePlan(plan, [...adapters.keys(), ...loadErrors.map((e) => e.tool)]),
+    ...preflightTools(plan, adapters, verifications, which, loadErrors, policy, config.reviewModel),
   ];
   if (problems.length > 0) throw new Error(`Không thể chạy plan:\n- ${problems.join('\n- ')}`);
-  const config: Config = loadConfig(repoRoot);
   acquire();
-  const policy: Policy = loadPolicy(repoRoot, config);
   const specPath = findSpecPath(markdown);
   const slug = plan.slug;
   const featBranch = `feat/${slug}`;
@@ -201,7 +212,7 @@ async function runPlanLocked(repoRoot: string, planPath: string, deps: RunDeps, 
     const adapter = adapters.get(task.tool);
     if (!adapter) return block(task, 'tool_unavailable', `Công cụ "${task.tool}" không còn`);
     if (!which(adapter.binary)) return block(task, 'tool_unavailable', `Không tìm thấy lệnh "${adapter.binary}"`);
-    if (!isAssignable(adapter, verifications)) {
+    if (!isAssignable(adapter, verifications, policy)) {
       return block(task, 'tool_unavailable', `Công cụ "${task.tool}" chưa xác minh cách ly`);
     }
     const reviewer = adapters.get('claude');
@@ -224,6 +235,15 @@ async function runPlanLocked(repoRoot: string, planPath: string, deps: RunDeps, 
         commitMessage: `feat: task ${task.id} ${task.name}`,
       });
       emit('worker_finished', task.id, 'worker', `Worker kết thúc: ${result.outcome}`, task.tool, task.model, result.model);
+      if (result.outcome === 'no_changes' && notes !== null) {
+        // The retry did not address the review notes: count it as a failed attempt.
+        if (ts.attempts < config.maxReviewRetries) {
+          ts.attempts += 1;
+          save();
+          continue;
+        }
+        return block(task, 'review_limit', notes);
+      }
       if (result.outcome === 'blocked' && result.block) return block(task, result.block.kind, result.block.detail);
       if (result.outcome !== 'changed') {
         return block(task, BLOCK_FOR_OUTCOME[result.outcome] ?? 'worker_error', result.block?.detail ?? result.outcome);
@@ -236,6 +256,7 @@ async function runPlanLocked(repoRoot: string, planPath: string, deps: RunDeps, 
           reviewModel: config.reviewModel, policy, timeoutMs,
         });
       } catch (err) {
+        if (err instanceof ReviewError) return block(task, err.kind, err.message);
         return block(task, 'worker_error', `Review lỗi: ${(err as Error).message}`);
       }
       if (verdict.verdict.verdict === 'pass') {

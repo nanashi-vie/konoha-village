@@ -100,4 +100,5 @@ Các ví dụ trên chỉ là điểm xuất phát: bạn phải tự kiểm c�
 
 - Đừng sửa file trong repo gốc (checkout chính) khi `konoha run` đang chạy: bộ canh gác coi đó là worker ghi ra ngoài và chặn việc (`outside_write`).
 - Chỉ một `konoha run` cho mỗi plan tại một thời điểm (khóa pid trong `.konoha/runs/<slug>/lock`). Ctrl-C giết các worker đang chạy; chạy lại để tiếp tục.
-- Sửa file khai báo công cụ (kể cả `agy.json` dựng sẵn) thì phải chạy lại `konoha tool check <tên>`.
+- Sửa file khai báo công cụ (kể cả `agy.json` dựng sẵn), hoặc đổi danh sách lệnh được phép (`testCommand` / `permissions.json`), thì phải chạy lại `konoha tool check <tên>`: bản xác minh gắn với cả hai.
+- Việc đang chạy và việc khác ghi vào worktree của nhau chưa được phát hiện (hạn chế đã biết).

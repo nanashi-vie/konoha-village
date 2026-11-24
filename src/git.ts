@@ -118,6 +118,9 @@ function checkedOutPath(repoRoot: string, branch: string): string | null {
 export function mergeFeatIntoDev(repoRoot: string, feat: string, integration: string): 'merged' | 'conflict' {
   let wt = checkedOutPath(repoRoot, integration);
   let temporary = false;
+  if (wt && git(wt, ['status', '--porcelain', '--untracked-files=no']).trim() !== '') {
+    throw new Error(`Nhánh ${integration} đang checkout ở ${wt} và có thay đổi chưa commit`);
+  }
   if (!wt) {
     wt = join(repoRoot, '.konoha', 'worktrees', '_dev');
     mkdirSync(dirname(wt), { recursive: true });

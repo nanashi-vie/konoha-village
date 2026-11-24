@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { runPlan, retryTask, mergeToDev, preflightTools, type RunDeps } from '../src/orchestrator.js';
+import { ReviewError } from '../src/review.js';
 import { loadAdapters } from '../src/adapters/load.js';
 import { compileTool } from '../src/adapters/definition.js';
 import type { Adapter } from '../src/adapters/types.js';
@@ -191,7 +192,7 @@ describe('runPlan', () => {
     const d = deps();
     delete d.adapters;
     // a repo override only keeps working after the user verified it
-    d.verifications = { claude: { tool: 'claude', hash: loadAdapters(root, d.home).adapters.get('claude')!.hash, date: 'x' } };
+    d.verifications = { claude: { tool: 'claude', hash: loadAdapters(root, d.home).adapters.get('claude')!.hash, date: 'x', commands: ['echo ok'] } };
     await runPlan(root, PLAN_PATH, d);
     expect(readEvents(root, 'demo').some((e) => e.type === 'tool_overridden' && e.summary.includes('claude'))).toBe(true);
   });
@@ -266,5 +267,51 @@ describe('resume and run safety', () => {
     expect(state.tasks[1].status).toBe('merged');
     expect(readLog(log).filter((l) => l.event === 'start')).toHaveLength(1);
     expect(git(integ, ['status', '--porcelain']).trim()).toBe('');
+  });
+});
+
+describe('deferred minors', () => {
+  it('M1: rejects a bad per-task model during preflight, before any branch', async () => {
+    const root = project(planText([{ id: 1, tool: 'fake / -y' }]));
+    await expect(runPlan(root, PLAN_PATH, deps())).rejects.toThrow(/tên model/);
+    expect(branches(root)).not.toContain('dev');
+  });
+  it('M1: rejects a bad reviewModel during preflight', async () => {
+    const root = project(planText([{ id: 1 }]));
+    writeFileSync(join(root, '.konoha', 'config.json'), JSON.stringify({ testCommand: 'echo ok', reviewModel: 'a b' }));
+    await expect(runPlan(root, PLAN_PATH, deps())).rejects.toThrow(/tên model/);
+    expect(branches(root)).not.toContain('dev');
+  });
+  it('M2: a tool with a load error is reported once, with its real cause', async () => {
+    const root = project(planText([{ id: 1, tool: 'broken' }]));
+    mkdirSync(join(root, '.konoha', 'tools'), { recursive: true });
+    writeFileSync(join(root, '.konoha', 'tools', 'broken.json'), '{bad');
+    const d = deps();
+    delete d.adapters;
+    const err = await runPlan(root, PLAN_PATH, d).then(() => '', (e: Error) => e.message);
+    expect(err).toContain('File công cụ "broken" lỗi');
+    expect(err).not.toContain('không được hỗ trợ');
+  });
+  it('M4: a review that times out blocks the task as timeout, not review_limit', async () => {
+    const root = project(planText([{ id: 1 }]));
+    const d = deps();
+    d.review = vi.fn(async () => { throw new ReviewError('timeout', 'quá giờ'); }) as never;
+    const state = await runPlan(root, PLAN_PATH, d);
+    expect(state.tasks[1].block?.kind).toBe('timeout');
+  });
+  it('M4: a missing reviewer binary blocks as tool_unavailable', async () => {
+    const root = project(planText([{ id: 1 }]));
+    const d = deps();
+    d.review = vi.fn(async () => { throw new ReviewError('tool_unavailable', 'mất lệnh'); }) as never;
+    expect((await runPlan(root, PLAN_PATH, d)).tasks[1].block?.kind).toBe('tool_unavailable');
+  });
+  it('M6: a retry that changes nothing counts as a failed attempt and ends in review_limit', async () => {
+    const log = logFile();
+    const root = project(planText([{ id: 1, body: 'FAKE_MODE=once' }]));
+    const d = deps({ env: { FAKE_LOG: log } });
+    d.review = vi.fn(async () => ({ verdict: { verdict: 'fail' as const, notes: 'sửa', planChange: null }, model: null })) as never;
+    const state = await runPlan(root, PLAN_PATH, d);
+    expect(state.tasks[1].block?.kind).toBe('review_limit');
+    expect(readLog(log).filter((l) => l.event === 'start')).toHaveLength(3);
   });
 });

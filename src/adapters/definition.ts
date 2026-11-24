@@ -81,6 +81,19 @@ export function compileTool(name: string, def: ToolDefinition, homeDir: string =
   if (!def.binary) throw new Error(`Công cụ "${name}": thiếu binary`);
   if (!def.modes?.work) throw new Error(`Công cụ "${name}": thiếu modes.work`);
   const binary = def.binary;
+  if (def.maxParallel !== undefined && (!Number.isInteger(def.maxParallel) || def.maxParallel < 1)) {
+    throw new Error(`Công cụ "${name}": maxParallel phải là số nguyên >= 1`);
+  }
+  for (const [k, v] of Object.entries(def.env ?? {})) {
+    if (typeof v !== 'string') throw new Error(`Công cụ "${name}": env.${k} phải là chuỗi`);
+  }
+  for (const mode of ['work', 'review'] as const) {
+    const args = def.modes[mode]?.args;
+    if (args !== undefined && (!Array.isArray(args) || args.some((a) => typeof a !== 'string'))) {
+      throw new Error(`Công cụ "${name}": modes.${mode}.args phải là mảng chuỗi`);
+    }
+  }
+  checkPlaceholders(`Công cụ "${name}" binary`, binary, []);
   const modelFlag = def.modelFlag ?? [];
   const commandRule = def.commandRule;
 

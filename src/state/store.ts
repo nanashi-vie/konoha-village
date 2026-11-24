@@ -34,7 +34,11 @@ export function initState(plan: Plan): RunState {
 export function loadState(repoRoot: string, slug: string): RunState | null {
   const file = join(runDir(repoRoot, slug), 'state.json');
   if (!existsSync(file)) return null;
-  return JSON.parse(readFileSync(file, 'utf8')) as RunState;
+  try {
+    return JSON.parse(readFileSync(file, 'utf8')) as RunState;
+  } catch (err) {
+    throw new Error(`${file} không đọc được: ${(err as Error).message}`);
+  }
 }
 
 export function saveState(repoRoot: string, state: RunState): void {

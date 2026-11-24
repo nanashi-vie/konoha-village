@@ -163,7 +163,7 @@ export async function runWorker(opts: {
   if (run.timedOut) return result('timeout', { kind: 'timeout', detail: `Quá ${Math.round(opts.timeoutMs / 1000)} giây` });
   const marker = readMarker(job.worktree);
   if (marker) return result('blocked', marker);
-  if (run.code !== 0 && !hasChanges(job.worktree)) {
+  if (run.code !== 0) {
     return result('error', { kind: 'worker_error', detail: `Mã thoát ${run.code}: ${run.stderr.trim().slice(0, 500)}` });
   }
   if (!commitAll(job.worktree, opts.commitMessage, [BLOCKED_MARKER])) {

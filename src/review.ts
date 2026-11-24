@@ -4,6 +4,12 @@ import { git } from './git.js';
 import type { Plan, PlanTask } from './plan/parse.js';
 import { runInvocation } from './worker.js';
 
+export class ReviewError extends Error {
+  constructor(public kind: 'timeout' | 'tool_unavailable', message: string) {
+    super(message);
+  }
+}
+
 export interface Verdict { verdict: 'pass' | 'fail'; notes: string; planChange: string | null }
 
 const BAD_FORMAT: Verdict = { verdict: 'fail', notes: 'Review trả về sai định dạng', planChange: null };
@@ -71,5 +77,7 @@ export async function runReview(opts: {
     mode: 'review', prompt, model: opts.reviewModel, policy: opts.policy, worktree: opts.worktree,
   });
   const run = await runInvocation(inv, opts.worktree, opts.timeoutMs);
+  if (run.timedOut) throw new ReviewError('timeout', 'Review quá giờ');
+  if (run.code === null) throw new ReviewError('tool_unavailable', `Không chạy được công cụ review: ${run.stderr.trim().slice(0, 300)}`);
   return { verdict: parseVerdict(run.stdout), model: opts.adapter.actualModel(run.stdout) };
 }

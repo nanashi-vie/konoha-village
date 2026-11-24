@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Fake coding tool for tests. argv[2] = prompt. Mode comes from "FAKE_MODE=<mode>" in the prompt, else env FAKE_MODE.
-// Modes: write | none | hang | block | outside | crash | escape | conflict
+// Modes: write | none | hang | block | outside | crash | escape | conflict | tamper | writecrash | once
 // Optional env: FAKE_PID_FILE, FAKE_LOG (append start/end lines), FAKE_DELAY_MS, FAKE_OUTSIDE_DIR.
-import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const prompt = process.argv[2] ?? '';
@@ -19,6 +19,13 @@ switch (mode) {
   case 'write':
     writeFileSync('inside.txt', 'ok');
     appendFileSync(`task-${taskNo}.txt`, 'run\n');
+    break;
+  case 'writecrash':
+    writeFileSync('inside.txt', 'ok');
+    process.exit(1);
+    break;
+  case 'once':
+    if (!existsSync('once.txt')) writeFileSync('once.txt', 'first');
     break;
   case 'conflict': {
     const lines = readFileSync('README.md', 'utf8').split('\n');

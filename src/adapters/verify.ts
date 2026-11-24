@@ -6,7 +6,7 @@ import type { Policy } from '../config.js';
 import { runInvocation } from '../worker.js';
 import type { Adapter } from './types.js';
 
-export interface Verification { tool: string; hash: string; date: string }
+export interface Verification { tool: string; hash: string; date: string; commands?: string[] }
 
 function verifiedFile(homeDir: string): string {
   return join(homeDir, '.config', 'konoha', 'verified.json');
@@ -15,7 +15,11 @@ function verifiedFile(homeDir: string): string {
 export function loadVerifications(homeDir: string = homedir()): Record<string, Verification> {
   const file = verifiedFile(homeDir);
   if (!existsSync(file)) return {};
-  return JSON.parse(readFileSync(file, 'utf8')) as Record<string, Verification>;
+  try {
+    return JSON.parse(readFileSync(file, 'utf8')) as Record<string, Verification>;
+  } catch (err) {
+    throw new Error(`${file} không đọc được: ${(err as Error).message}`);
+  }
 }
 
 export function recordVerification(v: Verification, homeDir: string = homedir()): void {
@@ -28,8 +32,12 @@ export function recordVerification(v: Verification, homeDir: string = homedir())
   renameSync(tmp, file);
 }
 
-export function isAssignable(a: Adapter, verifications: Record<string, Verification>): boolean {
-  return a.isolation === 'trusted' || verifications[a.tool]?.hash === a.hash;
+export function isAssignable(a: Adapter, verifications: Record<string, Verification>, policy?: Policy): boolean {
+  if (a.isolation === 'trusted') return true;
+  const v = verifications[a.tool];
+  if (v?.hash !== a.hash) return false;
+  // Commands the tool may run are part of what was verified.
+  return !policy || JSON.stringify(v.commands ?? []) === JSON.stringify(policy.allowCommands);
 }
 
 const CHECK_PROMPT =
