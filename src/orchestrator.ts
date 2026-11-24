@@ -31,7 +31,7 @@ export interface RunDeps {
   home?: string;
 }
 
-function defaultWhich(bin: string): boolean {
+export function defaultWhich(bin: string): boolean {
   if (bin.includes('/')) return existsSync(bin);
   try {
     execFileSync('which', [bin], { stdio: 'ignore' });

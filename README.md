@@ -30,7 +30,58 @@ Bộ điều phối nhận một plan đã duyệt, chạy từng việc bằng 
 
 ## Lệnh
 
-Sẽ được ghi đầy đủ ở Task 12 (`run`, `status`, `retry`, `merge`, `tool list`, `tool check`).
+Chạy trong repo đích (cần `.konoha/config.json` với `testCommand`).
+
+| Lệnh | Việc |
+|------|------|
+| `konoha run <plan.md>` | chạy hoặc chạy tiếp |
+| `konoha status <plan.md>` | bảng việc, trạng thái, lý do bị chặn |
+| `konoha retry <plan.md> <id>` | đưa việc bị chặn về `pending` sau khi bạn đã xử lý |
+| `konoha merge <plan.md>` | gộp `feat/<slug>` vào `dev` (chỉ khi `awaiting_merge`) |
+| `konoha tool list` | liệt kê công cụ, nguồn, có lệnh hay không, đã xác minh chưa |
+| `konoha tool check <tên>` | xác minh công cụ không ghi được ra ngoài worktree |
+
+Mã thoát: `0` thành công, `1` lỗi plan/cấu hình/tên công cụ, `2` cần người dùng.
+
+## Thêm công cụ
+
+Mỗi công cụ là một file JSON, tên file là tên công cụ. Nơi đặt, ưu tiên từ cao xuống thấp:
+`<repo>/.konoha/tools/<tên>.json` > `~/.config/konoha/tools/<tên>.json` > dựng sẵn (`claude`, `agy`). File trùng tên thay thế file ở mức thấp hơn (có sự kiện `tool_overridden`).
+
+Các trường:
+- `binary` (bắt buộc), `env` (chỗ trống `{prompt}`, `{worktree}`; `~/` được mở rộng), `maxParallel`.
+- `isolation`: `"trusted"` hoặc `"verify"` (mặc định). `verify` chỉ được giao việc sau `konoha tool check <tên>`; sửa file thì phải xác minh lại.
+- `modelFlag` (ví dụ `["--model","{model}"]`), `commandRule` (ví dụ `Bash({cmd}:*)`), `modelFrom` (`{"path":[...],"firstKey":true}` để đọc model thật từ JSON đầu ra).
+- `modes.work.args` (bắt buộc) và `modes.review.args`: chỗ trống `{prompt}`, `{worktree}`, `{allowCommands}`, và phần tử riêng `{modelFlag}`.
+- `extends`: kế thừa file khác, chỉ ghi phần thay đổi.
+
+Cờ bỏ qua quyền (`--dangerously-skip-permissions`, `--yolo`, `-y`, `--full-auto`, …) bị từ chối khi nạp file và khi dựng lệnh.
+
+### Nhiều tài khoản
+
+Một tài khoản là một file kế thừa công cụ gốc và đổi `env`. `~/.config/konoha/tools/claude-work.json`:
+
+```json
+{"extends": "claude", "env": {"CLAUDE_CONFIG_DIR": "~/.claude-work"}, "maxParallel": 2}
+```
+
+Trong plan ghi `**Giao cho:** claude-work / sonnet`. Mỗi tài khoản được xác minh riêng. File không chứa khóa hay token. Chương trình chưa tự chuyển tài khoản khi hết hạn mức.
+
+### Ví dụ công cụ khác (chưa thử trên máy thật, phải qua `konoha tool check`)
+
+```json
+{"binary":"codex","modelFlag":["--model","{model}"],
+ "modes":{"work":{"args":["exec","{prompt}","{modelFlag}"]}}}
+```
+```json
+{"binary":"gemini","modelFlag":["--model","{model}"],
+ "modes":{"work":{"args":["-p","{prompt}","{modelFlag}"]}}}
+```
+```json
+{"binary":"opencode","modelFlag":["--model","{model}"],
+ "modes":{"work":{"args":["run","{prompt}","{modelFlag}"]}}}
+```
+Các ví dụ trên chỉ là điểm xuất phát: bạn phải tự kiểm cờ quyền thật của từng công cụ để nó chỉ sửa trong worktree và chỉ chạy `{allowCommands}`.
 
 ## Ghi chú tương thích
 
