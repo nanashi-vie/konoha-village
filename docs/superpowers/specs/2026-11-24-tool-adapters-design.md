@@ -74,7 +74,7 @@ Không thêm khái niệm mới: **một tài khoản là một file khai báo**
 - Cách mỗi công cụ chọn tài khoản (biến môi trường, thư mục cấu hình…) khác nhau và phải kiểm khi dựng; công cụ nào không tách được tài khoản bằng `env` thì chưa hỗ trợ nhiều tài khoản.
 - Không làm ở bản đầu: tự chuyển tài khoản khi hết hạn mức, cân bằng tải giữa tài khoản.
 
-## 6. Ảnh hưởng đến tài liệu và plan hiện có (sẽ sửa sau khi duyệt)
+## 6. Ảnh hưởng đến tài liệu và plan hiện có (đã sửa 2026-11-24)
 
 - Spec orchestrator, mục 3: "ít nhất 4 công cụ" → "Claude Code và Antigravity CLI dựng sẵn; công cụ khác qua file khai báo". Mục 6.4: "bộ chuyển đổi" → file khai báo công cụ.
 - Plan Task 1: bỏ `ToolName`. Task 6: giao diện adapter + nạp/biên dịch file khai báo + file `claude`. Task 8: thay bằng file `agy`, lệnh `konoha tool check`, README có ví dụ Codex/Gemini/OpenCode (chưa thử). Task 7 và 9: adapter giả cho test được tạo từ file khai báo thay vì `registerAdapter`.

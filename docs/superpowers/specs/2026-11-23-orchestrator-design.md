@@ -30,7 +30,7 @@ Task có thể rất dài. Người dùng hỏi về việc chia thành một ph
 - Mỗi việc chạy cô lập, được review bởi model mạnh trước khi gộp.
 - Chạy được task dài: dừng/tắt máy giữa chừng thì chạy tiếp từ file.
 - Ghi một nhật ký sự kiện đủ để dự án làng hiển thị (công cụ, model, vai trò, thời điểm, kết quả).
-- Hỗ trợ ít nhất: Claude Code (headless), Codex CLI, Gemini CLI, OpenCode.
+- Dựng sẵn Claude Code (headless) và Antigravity CLI (`agy`); công cụ khác (Codex CLI, Gemini CLI, OpenCode, thêm tài khoản…) thêm bằng file khai báo JSON, không sửa code (xem `2026-11-24-tool-adapters-design.md`).
 
 **Không-mục-tiêu (bản đầu)**
 - Giao diện đồ họa (làng là dự án riêng). Bản đầu điều khiển bằng dòng lệnh và file.
@@ -80,9 +80,9 @@ Plan do Superpowers (writing-plans) viết được mở rộng thêm cho mỗi 
 
 Ví dụ:
 ```
-Việc 1  Tạo bảng dữ liệu   giao cho: codex          chờ: —
+Việc 1  Tạo bảng dữ liệu   giao cho: agy            chờ: —
 Việc 2  Viết API           giao cho: claude-sonnet  chờ: 1
-Việc 3  Làm giao diện      giao cho: gemini         chờ: 1
+Việc 3  Làm giao diện      giao cho: agy           chờ: 1
 Việc 4  Test tích hợp      giao cho: claude-opus    chờ: 2, 3
 ```
 
@@ -101,12 +101,12 @@ Việc 4  Test tích hợp      giao cho: claude-opus    chờ: 2, 3
 6. Review qua → gộp vào `feat/<tên-task>`, chạy test. Không qua → giao lại cho worker kèm nhận xét (giới hạn số lần, mặc định 2), quá giới hạn thì dừng việc đó và hỏi người dùng.
 
 ### 6.4 Quyền
-- Một file quy định quyền chung; mỗi công cụ có **bộ chuyển đổi** dịch file đó sang cấu hình riêng của công cụ (cờ dòng lệnh, file cấu hình, chế độ sandbox…). Cờ/cấu hình cụ thể của từng công cụ cần kiểm tra khi dựng.
+- Một file quy định quyền chung; mỗi công cụ có **file khai báo** (JSON) mô tả cách dịch quyền đó sang cờ dòng lệnh/cấu hình của công cụ. Chương trình biên dịch file khai báo thành adapter và áp cùng các cổng an toàn cho mọi công cụ (xem `2026-11-24-tool-adapters-design.md`). Cờ/cấu hình cụ thể của từng công cụ cần kiểm tra khi dựng.
 - Mặc định worker chỉ được: đọc/sửa file trong worktree của mình, chạy lệnh build/test của dự án.
 - Không bao giờ giao cho worker: push, gộp vào nhánh chính, xóa ngoài worktree, cài gói, gọi mạng ra ngoài, triển khai.
 - Worker cần quyền vượt mức → việc đó chuyển sang trạng thái "cần quyền: …", dừng riêng việc đó, hỏi người dùng.
 - Không dùng chế độ bỏ qua mọi quyền của bất kỳ công cụ nào.
-- **Khi công cụ không áp được đúng quy định (người dùng đã quyết):** dùng mức gần nhất công cụ hỗ trợ; sau khi worker chạy xong, chương trình tự kiểm tra có thay đổi nào ngoài worktree không, có thì loại kết quả và báo người dùng. Ngưỡng tối thiểu: công cụ nào không chặn được việc ghi file ra ngoài worktree thì không được giao việc. Lớp cách ly cấp hệ điều hành để dành cho sau nếu cần.
+- **Khi công cụ không áp được đúng quy định (người dùng đã quyết):** dùng mức gần nhất công cụ hỗ trợ; sau khi worker chạy xong, chương trình tự kiểm tra có thay đổi nào ngoài worktree không, có thì loại kết quả và báo người dùng. Ngưỡng tối thiểu: công cụ nào không chặn được việc ghi file ra ngoài worktree thì không được giao việc; điều này được bảo đảm bằng `konoha tool check <tên>` (xác minh cách ly theo băm file khai báo), chỉ `claude` dựng sẵn được tin sẵn. Lớp cách ly cấp hệ điều hành để dành cho sau nếu cần.
 
 ### 6.4b Thư viện mới (người dùng đã quyết)
 - Khi viết plan, Claude liệt kê các thư viện/gói cần thêm; người dùng duyệt danh sách này cùng plan.
