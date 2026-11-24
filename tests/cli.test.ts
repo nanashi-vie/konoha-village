@@ -37,7 +37,7 @@ function project() {
   write(join(root, '.konoha', 'config.json'), JSON.stringify({ testCommand: 'echo ok' }));
   write(join(root, PLAN), planText);
   // hermetic: a fake "claude" (trusted, with review) shadows the built-in
-  write(join(root, '.konoha', 'tools', 'claude.json'), JSON.stringify(fakeDefinition('write', { review: true })));
+  write(join(root, '.konoha', 'tools', 'claude.json'), JSON.stringify(fakeDefinition('write', { review: true, isolation: 'verify' })));
   write(join(root, '.konoha', 'tools', 'fake.json'), JSON.stringify(fakeDefinition('write', { isolation: 'verify' })));
   return root;
 }
@@ -59,6 +59,7 @@ describe('konoha cli', () => {
   it('run blocks a task, status shows needs_library, merge exits 2, retry validates ids', async () => {
     const root = project(); const h = home();
     expect((await cli(['tool', 'check', 'fake'], root, h)).code).toBe(0);
+    expect((await cli(['tool', 'check', 'claude'], root, h)).code).toBe(0);
     const run = await cli(['run', PLAN], root, h);
     expect(run.code).toBe(2);
     const status = await cli(['status', PLAN], root, h);

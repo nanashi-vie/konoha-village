@@ -50,8 +50,8 @@ Mỗi công cụ là một file JSON, tên file là tên công cụ. Nơi đặt
 
 Các trường:
 - `binary` (bắt buộc), `env` (chỗ trống `{prompt}`, `{worktree}`; `~/` được mở rộng), `maxParallel`.
-- `isolation`: `"trusted"` hoặc `"verify"` (mặc định). `verify` chỉ được giao việc sau `konoha tool check <tên>`; sửa file thì phải xác minh lại.
-- `modelFlag` (ví dụ `["--model","{model}"]`), `commandRule` (ví dụ `Bash({cmd}:*)`), `modelFrom` (`{"path":[...],"firstKey":true}` để đọc model thật từ JSON đầu ra).
+- `isolation`: `"trusted"` hoặc `"verify"` (mặc định). `trusted` chỉ được giữ khi file giống hệt `claude` dựng sẵn ngoại trừ `env`/`maxParallel`; file nào khác sẽ tự bị hạ về `verify`. `verify` chỉ được giao việc sau `konoha tool check <tên>`; sửa file thì phải xác minh lại.
+- `modelFlag` (ví dụ `["--model","{model}"]`), `commandRule` (ví dụ `Bash({cmd}:*)`; `{cmdEscaped}` là lệnh đã thoát JSON), `modelFrom` (`{"path":[...],"firstKey":true}` để đọc model thật từ JSON đầu ra).
 - `modes.work.args` (bắt buộc) và `modes.review.args`: chỗ trống `{prompt}`, `{worktree}`, `{allowCommands}`, và phần tử riêng `{modelFlag}`.
 - `extends`: kế thừa file khác, chỉ ghi phần thay đổi.
 
@@ -89,9 +89,15 @@ Các ví dụ trên chỉ là điểm xuất phát: bạn phải tự kiểm c�
 - Dùng `-p <prompt> --output-format json --mode accept-edits --settings '<json>'`, không dùng `--sandbox`.
 - `--mode accept-edits` tự duyệt sửa file trong thư mục làm việc; ghi ra ngoài bị từ chối (thử thật: `inside.txt` có, `../outside.txt` không có, `denied_actions` ghi `write_file`). `konoha tool check agy` vẫn phải qua cho từng máy.
 - Giới hạn lệnh: `--settings '{"permissions":{"allow":["command(<lệnh>)"]}}'`. Quy tắc khớp theo tiền tố từng từ (`command(npm test)` cho phép `npm test` kèm tham số). Thử thật: lệnh được liệt kê chạy không bị hỏi, lệnh khác (`whoami`) bị từ chối. Dạng `command(x *)` và `command(x:*)` không hoạt động.
-- Lệnh trong `allowCommands` không được chứa dấu `"` hoặc `\` (chúng được nhúng vào JSON).
+- Lệnh trong `allowCommands` được thoát JSON bằng `{cmdEscaped}` trong `commandRule`, nên chứa `"` hay `\` vẫn an toàn.
 - JSON đầu ra không có tên model thật, nên `model` trong nhật ký là `null` ("không rõ").
 - `agy` không có chế độ review; review luôn dùng `claude`.
 
 ### claude
 - Đã kiểm `claude --help` có `-p`, `--output-format`, `--permission-mode`, `--allowedTools`, `--model`.
+
+## Lưu ý khi chạy
+
+- Đừng sửa file trong repo gốc (checkout chính) khi `konoha run` đang chạy: bộ canh gác coi đó là worker ghi ra ngoài và chặn việc (`outside_write`).
+- Chỉ một `konoha run` cho mỗi plan tại một thời điểm (khóa pid trong `.konoha/runs/<slug>/lock`). Ctrl-C giết các worker đang chạy; chạy lại để tiếp tục.
+- Sửa file khai báo công cụ (kể cả `agy.json` dựng sẵn) thì phải chạy lại `konoha tool check <tên>`.

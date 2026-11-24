@@ -1,5 +1,5 @@
-import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { isAssignable, loadVerifications, type Verification } from './adapters/verify.js';
@@ -9,18 +9,19 @@ import { loadConfig, loadPolicy, type Config, type Policy } from './config.js';
 import { installLibraries } from './deps.js';
 import {
   createTaskWorktree, ensureBranches, ensureExcluded, integrationWorktree, mergeFeatIntoDev,
-  mergeTaskBranch, removeTaskWorktree, undoLastMerge,
+  mergeTaskBranch, removeTaskWorktree, undoLastMerge, git,
 } from './git.js';
 import { notifyUser } from './notify.js';
 import { parsePlan, type Plan, type PlanTask } from './plan/parse.js';
 import { validatePlan } from './plan/validate.js';
 import { runReview } from './review.js';
 import { nextRunnable } from './scheduler.js';
+import { runDir } from './state/store.js';
 import { appendEvent, type EventType } from './state/events.js';
 import {
   initState, loadState, recoverInterrupted, saveState, type BlockKind, type RunState,
 } from './state/store.js';
-import { buildBrief, runWorker } from './worker.js';
+import { buildBrief, installSignalHandlers, runShell, runWorker } from './worker.js';
 
 export interface RunDeps {
   review?: typeof runReview;
@@ -73,7 +74,36 @@ const BLOCK_FOR_OUTCOME: Record<string, BlockKind> = {
   timeout: 'timeout', no_changes: 'no_changes', error: 'worker_error', outside_write: 'outside_write',
 };
 
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function runPlan(repoRoot: string, planPath: string, deps: RunDeps = {}): Promise<RunState> {
+  installSignalHandlers();
+  const absPlan = isAbsolute(planPath) ? planPath : resolve(repoRoot, planPath);
+  const slug = parsePlan(readFileSync(absPlan, 'utf8'), planPath).slug;
+  const lock = join(runDir(repoRoot, slug), 'lock');
+  if (existsSync(lock)) {
+    const pid = Number(readFileSync(lock, 'utf8'));
+    if (Number.isInteger(pid) && pidAlive(pid)) throw new Error(`Plan "${slug}" đang chạy (pid ${pid})`);
+  }
+  const acquire = () => {
+    mkdirSync(runDir(repoRoot, slug), { recursive: true });
+    writeFileSync(lock, String(process.pid));
+  };
+  try {
+    return await runPlanLocked(repoRoot, planPath, deps, acquire);
+  } finally {
+    rmSync(lock, { force: true });
+  }
+}
+
+async function runPlanLocked(repoRoot: string, planPath: string, deps: RunDeps, acquire: () => void): Promise<RunState> {
   const home = deps.home ?? homedir();
   const which = deps.which ?? defaultWhich;
   const review = deps.review ?? runReview;
@@ -93,6 +123,7 @@ export async function runPlan(repoRoot: string, planPath: string, deps: RunDeps 
   ];
   if (problems.length > 0) throw new Error(`Không thể chạy plan:\n- ${problems.join('\n- ')}`);
   const config: Config = loadConfig(repoRoot);
+  acquire();
   const policy: Policy = loadPolicy(repoRoot, config);
   const specPath = findSpecPath(markdown);
   const slug = plan.slug;
@@ -102,12 +133,19 @@ export async function runPlan(repoRoot: string, planPath: string, deps: RunDeps 
   const state = loadState(repoRoot, slug) ?? initState(plan);
   if (state.status === 'merged_to_dev') return state;
   recoverInterrupted(state);
+  for (const t of plan.tasks) {
+    state.tasks[t.id] ??= { status: 'pending', attempts: 0, block: null };
+  }
   state.status = 'running';
 
   // 3. Branches, integration worktree, libraries.
   ensureExcluded(repoRoot, '.konoha/');
   ensureBranches(repoRoot, config.baseBranch, config.integrationBranch, featBranch);
   const integ = integrationWorktree(repoRoot, slug);
+  // A killed run can leave a half-done merge or stray files in the integration worktree.
+  try { git(integ, ['merge', '--abort']); } catch { /* no merge in progress */ }
+  git(integ, ['reset', '--hard', 'HEAD']);
+  git(integ, ['clean', '-fd']);
   const save = () => saveState(repoRoot, state);
   const emit = (type: EventType, taskId: number | null, role: 'program' | 'worker' | 'judge', summary: string,
     tool: string | null = null, modelRequested: string | null = null, model: string | null = null) =>
@@ -122,6 +160,28 @@ export async function runPlan(repoRoot: string, planPath: string, deps: RunDeps 
   emit('run_started', null, 'program', `Bắt đầu chạy plan ${plan.path}`);
   for (const o of loaded?.overridden ?? []) {
     emit('tool_overridden', null, 'program', `Công cụ "${o.tool}" bị thay bởi file ${o.by}`, o.tool);
+  }
+
+  // Adopt tasks whose merge reached feat/<slug> but was never recorded (killed before the state was saved).
+  for (const task of plan.tasks) {
+    if (state.tasks[task.id].status !== 'pending') continue;
+    const branch = `wt/${slug}/task-${task.id}`;
+    let tip: string;
+    try { tip = git(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]).trim(); } catch { continue; }
+    const mergedTips = git(repoRoot, ['log', featBranch, '--merges', '--format=%P']).split('\n').map((l) => l.split(' ')[1]);
+    if (!mergedTips.includes(tip)) continue;
+    const tests = await runShell(config.testCommand, integ, config.workerTimeoutMinutes * 60_000);
+    git(integ, ['clean', '-fd']);
+    if (tests.code === 0) {
+      state.tasks[task.id].status = 'merged';
+      save();
+      emit('task_merged', task.id, 'program', `Việc ${task.id} đã gộp từ lần chạy trước`, task.tool, task.model);
+      removeTaskWorktree(repoRoot, slug, task.id);
+    } else {
+      try {
+        if (git(integ, ['rev-parse', 'HEAD^2']).trim() === tip) undoLastMerge(integ);
+      } catch { /* HEAD is not that merge */ }
+    }
   }
 
   const toolLimits: Record<string, number> = {};
@@ -149,8 +209,8 @@ export async function runPlan(repoRoot: string, planPath: string, deps: RunDeps 
 
     const wt = createTaskWorktree(repoRoot, slug, task.id);
     if (config.setupCommand) {
-      const setup = spawnSync(config.setupCommand, { cwd: wt, shell: true, encoding: 'utf8' });
-      if (setup.status !== 0) return block(task, 'worker_error', `setupCommand hỏng: ${(setup.stderr ?? '').slice(0, 300)}`);
+      const setup = await runShell(config.setupCommand, wt, timeoutMs);
+      if (setup.code !== 0) return block(task, 'worker_error', `setupCommand hỏng: ${setup.stderr.slice(0, 300)}`);
     }
     emit('task_started', task.id, 'program', `Bắt đầu việc ${task.id}: ${task.name}`, task.tool, task.model);
 
@@ -183,10 +243,11 @@ export async function runPlan(repoRoot: string, planPath: string, deps: RunDeps 
         if (mergeTaskBranch(integ, `wt/${slug}/task-${task.id}`) === 'conflict') {
           return block(task, 'merge_conflict', 'Gộp vào nhánh tổng bị xung đột');
         }
-        const tests = spawnSync(config.testCommand, { cwd: integ, shell: true, encoding: 'utf8' });
-        if (tests.status !== 0) {
+        const tests = await runShell(config.testCommand, integ, timeoutMs);
+        git(integ, ['clean', '-fd']);
+        if (tests.code !== 0) {
           undoLastMerge(integ);
-          return block(task, 'tests_failed_after_merge', `${tests.stdout ?? ''}${tests.stderr ?? ''}`.slice(-500));
+          return block(task, 'tests_failed_after_merge', tests.timedOut ? 'Test sau gộp quá giờ' : `${tests.stdout}${tests.stderr}`.slice(-500));
         }
         ts.status = 'merged';
         ts.block = null;

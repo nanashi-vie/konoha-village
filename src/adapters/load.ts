@@ -5,6 +5,20 @@ import { fileURLToPath } from 'node:url';
 import { compileTool, resolveDefinition, type ToolDefinition } from './definition.js';
 import type { Adapter } from './types.js';
 
+// Trust is only kept by definitions that equal the built-in claude except for env and maxParallel.
+function canonical(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(canonical);
+  if (v && typeof v === 'object') {
+    return Object.fromEntries(Object.entries(v as Record<string, unknown>)
+      .sort(([x], [y]) => (x < y ? -1 : 1)).map(([k, x]) => [k, canonical(x)]));
+  }
+  return v;
+}
+function trustShape(def: ToolDefinition): string {
+  const { env: _env, maxParallel: _max, isolation: _iso, extends: _ext, ...rest } = def;
+  return JSON.stringify(canonical(rest));
+}
+
 export interface LoadResult {
   adapters: Map<string, Adapter>;
   errors: { tool: string; message: string }[];
@@ -41,9 +55,23 @@ export function loadAdapters(repoRoot: string, homeDir: string = homedir()): Loa
     }
   }
 
+  let builtinShape: string | null = null;
+  try {
+    const builtinDefs: Record<string, ToolDefinition> = {};
+    const dir = tiers[0].dir;
+    for (const f of readdirSync(dir).filter((x) => x.endsWith('.json'))) {
+      builtinDefs[f.slice(0, -5)] = JSON.parse(readFileSync(join(dir, f), 'utf8')) as ToolDefinition;
+    }
+    builtinShape = trustShape(resolveDefinition('claude', builtinDefs));
+  } catch {
+    builtinShape = null;
+  }
+
   for (const name of Object.keys(defs)) {
     try {
-      result.adapters.set(name, compileTool(name, resolveDefinition(name, defs), homeDir));
+      const resolved = resolveDefinition(name, defs);
+      if (resolved.isolation === 'trusted' && trustShape(resolved) !== builtinShape) resolved.isolation = 'verify';
+      result.adapters.set(name, compileTool(name, resolved, homeDir));
     } catch (err) {
       result.errors.push({ tool: name, message: (err as Error).message });
     }

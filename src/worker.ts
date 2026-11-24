@@ -1,5 +1,6 @@
-import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Adapter, Invocation, WorkerJob } from './adapters/types.js';
 import { commitAll, dirtySnapshot, git } from './git.js';
@@ -9,6 +10,36 @@ import type { BlockKind } from './state/store.js';
 export interface RunResult { code: number | null; stdout: string; stderr: string; timedOut: boolean }
 
 export const BLOCKED_MARKER = '.konoha-blocked.json';
+
+const liveGroups = new Set<number>();
+
+/** Kill every worker process group that is still running (used on Ctrl-C / SIGTERM). */
+export function killAllChildren(): void {
+  for (const pid of liveGroups) {
+    try {
+      process.kill(-pid, 'SIGKILL');
+    } catch {
+      // already gone
+    }
+  }
+  liveGroups.clear();
+}
+
+let handlersInstalled = false;
+export function installSignalHandlers(): void {
+  if (handlersInstalled) return;
+  handlersInstalled = true;
+  for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+    process.once(sig, () => {
+      killAllChildren();
+      process.exit(sig === 'SIGINT' ? 130 : 143);
+    });
+  }
+}
+
+export function runShell(command: string, cwd: string, timeoutMs: number): Promise<RunResult> {
+  return runInvocation({ cmd: '/bin/sh', args: ['-c', command], env: {} }, cwd, timeoutMs);
+}
 
 export function runInvocation(inv: Invocation, cwd: string, timeoutMs: number): Promise<RunResult> {
   return new Promise((resolve) => {
@@ -20,11 +51,13 @@ export function runInvocation(inv: Invocation, cwd: string, timeoutMs: number): 
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (child.pid) liveGroups.delete(child.pid);
       resolve({ code, stdout, stderr, timedOut });
     };
     const child = spawn(inv.cmd, inv.args, {
       cwd, env: { ...process.env, ...inv.env }, stdio: ['ignore', 'pipe', 'pipe'], detached: true,
     });
+    if (child.pid) liveGroups.add(child.pid);
     child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
     child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
     const timer = setTimeout(() => {
@@ -91,6 +124,22 @@ function readMarker(worktree: string): { kind: BlockKind; detail: string } | nul
   }
 }
 
+/** Fingerprint of the files that control what konoha runs; they are git-excluded so status cannot see them. */
+function konohaFingerprint(paths: string[]): string {
+  const h = createHash('sha256');
+  for (const p of paths) {
+    const base = join(p, '.konoha');
+    const files = ['config.json', 'permissions.json'].map((f) => join(base, f));
+    const toolsDir = join(base, 'tools');
+    if (existsSync(toolsDir)) files.push(...readdirSync(toolsDir).sort().map((f) => join(toolsDir, f)));
+    for (const f of files) {
+      h.update(f);
+      if (existsSync(f)) h.update(readFileSync(f));
+    }
+  }
+  return h.digest('hex');
+}
+
 function hasChanges(worktree: string): boolean {
   return git(worktree, ['status', '--porcelain', '--', '.', `:(exclude)${BLOCKED_MARKER}`]).trim() !== '';
 }
@@ -100,10 +149,10 @@ export async function runWorker(opts: {
   testCommand: string; commitMessage: string;
 }): Promise<WorkerResult> {
   const { adapter, job } = opts;
-  const before = dirtySnapshot(opts.guardPaths);
+  const before = { git: dirtySnapshot(opts.guardPaths), konoha: konohaFingerprint(opts.guardPaths) };
   const inv = adapter.build(job);
   const run = await runInvocation(inv, job.worktree, opts.timeoutMs);
-  const after = dirtySnapshot(opts.guardPaths);
+  const after = { git: dirtySnapshot(opts.guardPaths), konoha: konohaFingerprint(opts.guardPaths) };
   const model = adapter.actualModel(run.stdout);
   const result = (outcome: WorkerResult['outcome'], block: WorkerResult['block'] = null, testOutput = ''): WorkerResult =>
     ({ outcome, block, stdout: run.stdout, model, testOutput });
@@ -120,9 +169,7 @@ export async function runWorker(opts: {
   if (!commitAll(job.worktree, opts.commitMessage, [BLOCKED_MARKER])) {
     return result('no_changes', { kind: 'no_changes', detail: 'Worker không sửa gì' });
   }
-  const tests = spawnSync(opts.testCommand, {
-    cwd: job.worktree, shell: true, encoding: 'utf8', timeout: opts.timeoutMs,
-  });
-  const testOutput = `${tests.stdout ?? ''}${tests.stderr ?? ''}`.slice(-20000);
+  const tests = await runShell(opts.testCommand, job.worktree, opts.timeoutMs);
+  const testOutput = `${tests.stdout}${tests.stderr}`.slice(-20000);
   return result('changed', null, testOutput);
 }

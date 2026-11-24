@@ -5,7 +5,7 @@ export function installLibraries(integrationWt: string, commands: string[]): voi
   if (commands.length === 0) return;
   for (const cmd of commands) {
     try {
-      execSync(cmd, { cwd: integrationWt, stdio: 'pipe' });
+      execSync(cmd, { cwd: integrationWt, stdio: 'pipe', timeout: 600_000 });
     } catch (err) {
       const stderr = String((err as { stderr?: Buffer }).stderr ?? '').trim();
       throw new Error(`Lệnh cài thư viện hỏng: ${cmd}${stderr ? ` — ${stderr.slice(0, 300)}` : ''}`);

@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { runPlan, retryTask, mergeToDev, preflightTools, type RunDeps } from '../src/orchestrator.js';
+import { loadAdapters } from '../src/adapters/load.js';
 import { compileTool } from '../src/adapters/definition.js';
 import type { Adapter } from '../src/adapters/types.js';
 import { loadState, saveState } from '../src/state/store.js';
@@ -186,9 +187,11 @@ describe('runPlan', () => {
     const root = project(planText([{ id: 1, tool: 'claude' }]));
     mkdirSync(join(root, '.konoha', 'tools'), { recursive: true });
     writeFileSync(join(root, '.konoha', 'tools', 'claude.json'),
-      JSON.stringify(fakeDefinition('write', { review: true })));
+      JSON.stringify(fakeDefinition('write', { review: true, isolation: 'verify' })));
     const d = deps();
     delete d.adapters;
+    // a repo override only keeps working after the user verified it
+    d.verifications = { claude: { tool: 'claude', hash: loadAdapters(root, d.home).adapters.get('claude')!.hash, date: 'x' } };
     await runPlan(root, PLAN_PATH, d);
     expect(readEvents(root, 'demo').some((e) => e.type === 'tool_overridden' && e.summary.includes('claude'))).toBe(true);
   });
@@ -225,5 +228,43 @@ describe('preflightTools', () => {
     const errs = preflightTools(plan, adapters, {}, () => true, [{ tool: 'fake', message: 'hỏng' }]);
     expect(errs).toContain('File công cụ "fake" lỗi: hỏng');
     expect(errs).toContain('Review cần công cụ "claude" có chế độ review');
+  });
+});
+
+describe('resume and run safety', () => {
+  it('adds tasks that appear in an edited plan (I5)', async () => {
+    const root = project(planText([{ id: 1 }]));
+    await runPlan(root, PLAN_PATH, deps());
+    writeFileSync(join(root, PLAN_PATH), planText([{ id: 1 }, { id: 2, wait: '1' }]));
+    const state = await runPlan(root, PLAN_PATH, deps());
+    expect(state.tasks[2].status).toBe('merged');
+    expect(state.status).toBe('awaiting_merge');
+  });
+
+  it('refuses a second concurrent run but ignores a stale lock (I1)', async () => {
+    const root = project(planText([{ id: 1 }]));
+    const lock = join(root, '.konoha', 'runs', 'demo', 'lock');
+    mkdirSync(join(lock, '..'), { recursive: true });
+    writeFileSync(lock, String(process.pid));
+    await expect(runPlan(root, PLAN_PATH, deps())).rejects.toThrow(/đang chạy/);
+    writeFileSync(lock, '999999');
+    await expect(runPlan(root, PLAN_PATH, deps())).resolves.toBeDefined();
+  });
+
+  it('repairs integration and adopts a merge that was never recorded (I2)', async () => {
+    const log = logFile();
+    const root = project(planText([{ id: 1 }]));
+    await runPlan(root, PLAN_PATH, deps({ env: { FAKE_LOG: log } }));
+    const integ = join(root, '.konoha', 'worktrees', 'demo', '_integration');
+    git(root, ['branch', 'wt/demo/task-1', git(root, ['rev-parse', 'feat/demo^2']).trim()]);
+    writeFileSync(join(integ, 'junk.txt'), 'leftover');
+    const s = loadState(root, 'demo')!;
+    s.tasks[1] = { status: 'pending', attempts: 0, block: null };
+    s.status = 'running';
+    saveState(root, s);
+    const state = await runPlan(root, PLAN_PATH, deps({ env: { FAKE_LOG: log } }));
+    expect(state.tasks[1].status).toBe('merged');
+    expect(readLog(log).filter((l) => l.event === 'start')).toHaveLength(1);
+    expect(git(integ, ['status', '--porcelain']).trim()).toBe('');
   });
 });

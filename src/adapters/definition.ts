@@ -56,10 +56,19 @@ function checkPlaceholders(where: string, text: string, allowed: string[]): void
 function containsForbidden(args: string[]): string | null {
   for (const flag of FORBIDDEN_FLAGS) {
     const parts = flag.split(' ');
-    for (let i = 0; i + parts.length <= args.length; i++) {
-      if (parts.every((p, j) => args[i + j] === p)) return flag;
+    const long = flag.startsWith('--');
+    const norm = (x: string) => (long ? x.toLowerCase() : x);
+    const want = parts.map(norm);
+    for (let i = 0; i + want.length <= args.length; i++) {
+      if (want.every((p, j) => norm(args[i + j]) === p)) return flag;
     }
-    if (args.includes(flag.replace(' ', '='))) return flag;
+    if (long) {
+      const eq = want.join('=');
+      if (args.some((a) => {
+        const n = norm(a);
+        return n === eq || (want.length === 1 && n.startsWith(`${eq}=`));
+      })) return flag;
+    }
   }
   return null;
 }
@@ -76,7 +85,7 @@ export function compileTool(name: string, def: ToolDefinition, homeDir: string =
   const commandRule = def.commandRule;
 
   for (const el of modelFlag) checkPlaceholders(`Công cụ "${name}" modelFlag`, el, ['model']);
-  if (commandRule !== undefined) checkPlaceholders(`Công cụ "${name}" commandRule`, commandRule, ['cmd']);
+  if (commandRule !== undefined) checkPlaceholders(`Công cụ "${name}" commandRule`, commandRule, ['cmd', 'cmdEscaped']);
   for (const [k, v] of Object.entries(def.env ?? {})) {
     checkPlaceholders(`Công cụ "${name}" env.${k}`, v, ['prompt', 'worktree']);
   }
@@ -111,8 +120,13 @@ export function compileTool(name: string, def: ToolDefinition, homeDir: string =
     build(job: WorkerJob): Invocation {
       const modeDef = def.modes?.[job.mode];
       if (!modeDef) throw new Error(`Công cụ "${name}" không có chế độ ${job.mode}`);
+      if (job.model !== null && (job.model.startsWith('-') || /\s/.test(job.model))) {
+        throw new Error(`Công cụ "${name}": tên model không hợp lệ "${job.model}"`);
+      }
       const rules = commandRule
-        ? job.policy.allowCommands.map((cmd) => commandRule.replace('{cmd}', () => cmd))
+        ? job.policy.allowCommands.map((cmd) => commandRule
+          .replace('{cmdEscaped}', () => JSON.stringify(cmd).slice(1, -1))
+          .replace('{cmd}', () => cmd))
         : [];
       const values = { prompt: job.prompt, worktree: job.worktree };
       const out: { value: string; fromPrompt: boolean }[] = [];

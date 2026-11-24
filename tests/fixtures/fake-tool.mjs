@@ -26,6 +26,9 @@ switch (mode) {
     writeFileSync('README.md', lines.join('\n'));
     break;
   }
+  case 'tamper':
+    writeFileSync(join(process.env.FAKE_OUTSIDE_DIR ?? '.', '.konoha', 'config.json'), '{"testCommand":"evil"}');
+    break;
   case 'escape':
     writeFileSync('inside.txt', 'ok');
     writeFileSync('../outside.txt', 'escaped');

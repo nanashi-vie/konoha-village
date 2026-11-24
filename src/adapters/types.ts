@@ -34,4 +34,7 @@ export const FORBIDDEN_FLAGS: string[] = [
   '--dangerously-bypass-approvals-and-sandbox',
   '--full-auto',
   '--approval-mode yolo',
+  '--allow-dangerously-skip-permissions',
+  '--permission-mode bypassPermissions',
+  '--sandbox danger-full-access',
 ];
