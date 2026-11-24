@@ -31,3 +31,16 @@ Bộ điều phối nhận một plan đã duyệt, chạy từng việc bằng 
 ## Lệnh
 
 Sẽ được ghi đầy đủ ở Task 12 (`run`, `status`, `retry`, `merge`, `tool list`, `tool check`).
+
+## Ghi chú tương thích
+
+### agy (Antigravity CLI), thử ngày 2026-11-24, bản 1.5.16
+- Dùng `-p <prompt> --output-format json --mode accept-edits --settings '<json>'`, không dùng `--sandbox`.
+- `--mode accept-edits` tự duyệt sửa file trong thư mục làm việc; ghi ra ngoài bị từ chối (thử thật: `inside.txt` có, `../outside.txt` không có, `denied_actions` ghi `write_file`). `konoha tool check agy` vẫn phải qua cho từng máy.
+- Giới hạn lệnh: `--settings '{"permissions":{"allow":["command(<lệnh>)"]}}'`. Quy tắc khớp theo tiền tố từng từ (`command(npm test)` cho phép `npm test` kèm tham số). Thử thật: lệnh được liệt kê chạy không bị hỏi, lệnh khác (`whoami`) bị từ chối. Dạng `command(x *)` và `command(x:*)` không hoạt động.
+- Lệnh trong `allowCommands` không được chứa dấu `"` hoặc `\` (chúng được nhúng vào JSON).
+- JSON đầu ra không có tên model thật, nên `model` trong nhật ký là `null` ("không rõ").
+- `agy` không có chế độ review; review luôn dùng `claude`.
+
+### claude
+- Đã kiểm `claude --help` có `-p`, `--output-format`, `--permission-mode`, `--allowedTools`, `--model`.
