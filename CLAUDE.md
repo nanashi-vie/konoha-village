@@ -22,7 +22,8 @@ The repo currently holds design docs only; no source code yet. Docs are written 
 | File | What it is | Status |
 |------|-----------|--------|
 | `docs/superpowers/specs/2026-11-23-orchestrator-design.md` | Design of the `konoha` orchestrator: takes an approved plan, runs each task with a chosen tool (Claude Code, Codex, Gemini CLI, OpenCode) in its own worktree, reviews with the strongest model, merges into `feat/<task>`, waits for approval before merging to `dev` | Approved (project 1, built first) |
-| `docs/superpowers/plans/2026-11-23-orchestrator.md` | Implementation plan for the orchestrator (TypeScript, Node >= 20, vitest, no runtime deps) | Ready to execute |
+| `docs/superpowers/specs/2026-11-24-tool-adapters-design.md` | Adapter layer revision: tools are JSON definition files (repo, `~/.config/konoha/tools/`, built-in), built-ins are `claude` and `agy`, accounts are definitions that `extends` another, isolation must be verified by `konoha tool check` | Approved (overrides the adapter parts of the orchestrator design) |
+| `docs/superpowers/plans/2026-11-23-orchestrator.md` | Implementation plan for the orchestrator (TypeScript, Node >= 20, vitest, no runtime deps); updated for declarative tool adapters | Ready to execute |
 | `docs/superpowers/specs/2026-11-23-workflow-town-design.md` | Design of the visual village (isometric 2D, Naruto village / Old Trafford themes) that reads the orchestrator's event log | Draft, on hold until the orchestrator is done (project 2) |
 
 ### Key relationships
